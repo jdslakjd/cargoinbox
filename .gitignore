@@ -1,0 +1,18 @@
+## Build
+bin/
+obj/
+out/
+
+## IDE
+.vs/
+*.user
+*.suo
+
+## Secrets (use appsettings.example.json as template)
+appsettings.json
+appsettings.Development.json
+appsettings.*.local.json
+
+## OS
+.DS_Store
+Thumbs.db

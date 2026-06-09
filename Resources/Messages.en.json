@@ -1,0 +1,21 @@
+{
+  "RegisterSuccess": "Registration successful",
+  "LoginSuccess": "Login successful",
+  "UsernameExists": "Username already exists",
+  "InvalidCredentials": "Invalid username or password",
+  "MailNotFound": "Mail not found",
+  "ConversationNotFound": "Conversation not found",
+  "ReplySuccess": "Reply sent",
+  "AssignSuccess": "Assigned successfully",
+  "ArchiveSuccess": "Archived successfully",
+  "LockSuccess": "Lock acquired",
+  "UnlockSuccess": "Lock released",
+  "SnoozeSuccess": "Snoozed",
+  "ApprovalSubmitted": "Approval submitted",
+  "ApprovalApproved": "Approved for sending",
+  "ApprovalRejected": "Approval rejected",
+  "FileTooLarge": "File size exceeds limit",
+  "FileEmpty": "File cannot be empty",
+  "RuleCreated": "Rule created",
+  "TemplateCreated": "Template created"
+}

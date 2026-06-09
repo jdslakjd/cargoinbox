@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="RegisterSuccess" xml:space="preserve"><value>注册成功</value></data>
+  <data name="LoginSuccess" xml:space="preserve"><value>登录成功</value></data>
+  <data name="UsernameExists" xml:space="preserve"><value>用户名已存在</value></data>
+  <data name="InvalidCredentials" xml:space="preserve"><value>用户名或密码错误</value></data>
+  <data name="MailNotFound" xml:space="preserve"><value>邮件未找到</value></data>
+  <data name="ConversationNotFound" xml:space="preserve"><value>会话不存在</value></data>
+  <data name="ReplySuccess" xml:space="preserve"><value>回复成功</value></data>
+  <data name="AssignSuccess" xml:space="preserve"><value>指派成功</value></data>
+  <data name="ArchiveSuccess" xml:space="preserve"><value>归档成功</value></data>
+  <data name="LockSuccess" xml:space="preserve"><value>锁定成功</value></data>
+  <data name="UnlockSuccess" xml:space="preserve"><value>已释放锁</value></data>
+  <data name="SnoozeSuccess" xml:space="preserve"><value>已进入稍后提醒队列</value></data>
+  <data name="ApprovalSubmitted" xml:space="preserve"><value>审批流已发起</value></data>
+  <data name="ApprovalApproved" xml:space="preserve"><value>已批准发信</value></data>
+  <data name="ApprovalRejected" xml:space="preserve"><value>已驳回发信申请</value></data>
+</root>
