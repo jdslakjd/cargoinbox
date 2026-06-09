@@ -129,6 +129,8 @@ builder.Services.AddScoped<CrmTimelineService>();
 builder.Services.AddScoped<PipelineService>();
 builder.Services.AddScoped<RoundRobinAssignmentService>();
 builder.Services.AddScoped<TicketService>();
+builder.Services.AddScoped<ContactConvergenceService>();
+builder.Services.AddScoped<ServiceAnalyticsService>();
 builder.Services.AddScoped<LiveChatService>();
 builder.Services.AddScoped<CrmCustomFieldService>();
 builder.Services.AddSingleton<CrmSegmentEvaluator>();

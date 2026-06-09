@@ -16,7 +16,8 @@ public class ContactsController(
     ITenantProvider tenantProvider,
     CrmActivityService crmActivity,
     CrmTimelineService timelineService,
-    CrmCustomFieldService customFieldService) : ControllerBase
+    CrmCustomFieldService customFieldService,
+    ContactConvergenceService contactConvergence) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetContacts(
@@ -329,4 +330,12 @@ public class ContactsController(
         Dictionary<string, string>? CustomFields);
 
     public record AddNoteRequest(string Body, string? Title);
+
+    [HttpPost("sync-legacy-customers")]
+    public async Task<IActionResult> SyncLegacyCustomers()
+    {
+        if (!InboxPermissionService.IsAdmin(User)) return Forbid();
+        var result = await contactConvergence.SyncCustomerLinksAsync(tenantProvider.TenantId);
+        return Ok(result);
+    }
 }

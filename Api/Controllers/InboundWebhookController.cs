@@ -148,60 +148,59 @@ public class InboundWebhookController(
 
             if (string.IsNullOrEmpty(email) && string.IsNullOrEmpty(phone)) return BadRequest("Email or phone required");
 
-            var existingContact = await context.Contacts.FirstOrDefaultAsync(c => c.Email == email || c.TikTokLeadId == leadId);
-            if (existingContact == null)
+            var tenantId = "default";
+            string contactId;
+            if (!string.IsNullOrEmpty(email))
+                contactId = await contactService.GetOrCreateContactAsync(email, tenantId);
+            else
+                contactId = await contactService.GetOrCreateContactByPhoneAsync(phone, tenantId);
+
+            var contact = await context.Contacts.IgnoreQueryFilters().FirstAsync(c => c.Id == contactId);
+            if (string.IsNullOrEmpty(contact.TikTokLeadId))
             {
-                existingContact = new Contact
-                {
-                    Email = email,
-                    Phone = phone,
-                    Name = companyName,
-                    TikTokLeadId = leadId,
-                    LeadSource = "TikTok_AD"
-                };
-                context.Contacts.Add(existingContact);
+                contact.TikTokLeadId = leadId;
+                contact.LeadSource = "TikTok_AD";
+                if (!string.IsNullOrEmpty(phone)) contact.Phone = phone;
+                if (!string.IsNullOrEmpty(companyName)) contact.Name = companyName;
                 await context.SaveChangesAsync();
             }
 
-            var conversation = new Conversation
-            {
-                UserId = "tiktok-channel",
-                Title = $"🎯 TikTok 广告表单留资: {companyName}",
-                Channel = MessageChannel.TikTok,
-                Status = MailStatus.Open,
-                ContactId = existingContact.Id,
-                LastMessageAt = DateTime.UtcNow
-            };
-            context.Conversations.Add(conversation);
-            await context.SaveChangesAsync();
-
-            var infoMessage = new ConversationMessage
-            {
-                ConversationId = conversation.Id,
-                FromAddress = email,
-                ToAddress = "tiktok@cargoinbox.cn",
-                Subject = "New TikTok Form Lead Generated",
-                TextBody = $"客户在 TikTok 广告活动中提交了留资申请。公司名称: {companyName}, 电话: {phone}, 邮箱: {email}",
-                HtmlBody = $"<div style='padding:15px;'><h3>🎯 TikTok 广告留资通知</h3><p>公司: {companyName}</p><p>电话: {phone}</p></div>",
-                DateTime = DateTime.UtcNow,
-                Type = MessageType.InstantMessage
-            };
-            context.ConversationMessages.Add(infoMessage);
-            await context.SaveChangesAsync();
+            var body = $"客户在 TikTok 广告活动中提交了留资。公司: {companyName}, 电话: {phone}, 邮箱: {email}";
+            var (conversation, _, isNew) = await inboundConversationService.AppendOrCreateAsync(
+                new InboundConversationService.InboundMessageRequest(
+                    tenantId,
+                    contactId,
+                    MessageChannel.TikTok,
+                    email,
+                    "tiktok@cargoinbox.cn",
+                    $"TikTok 留资: {companyName}",
+                    body,
+                    $"<p>{body}</p>",
+                    "tiktok-channel",
+                    $"🎯 TikTok 广告表单: {companyName}"));
 
             context.ActivityLogs.Add(new ActivityLog
             {
+                TenantId = tenantId,
                 ConversationId = conversation.Id,
                 UserId = "system-webhook",
                 UserName = "TikTok网关",
                 Action = "InboundLeadCapture",
-                Detail = $"TikTok 广告表单线索成功捕获并无感建立档案。LeadId: {leadId}"
+                Detail = $"TikTok LeadId: {leadId}"
             });
             await context.SaveChangesAsync();
 
-            await hubContext.Clients.All.SendAsync("OnGlobalNewConversationReceived", new { conversationId = conversation.Id, channel = "TikTok", snippet = companyName });
+            if (isNew)
+            {
+                await hubContext.Clients.All.SendAsync("OnGlobalNewConversationReceived", new
+                {
+                    conversationId = conversation.Id,
+                    channel = "TikTok",
+                    snippet = companyName
+                });
+            }
 
-            return Ok(new { message = "TikTok Lead sync closed successfully" });
+            return Ok(new { message = "TikTok Lead sync closed successfully", conversationId = conversation.Id });
         }
         catch (Exception ex)
         {

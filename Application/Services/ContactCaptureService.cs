@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using CargoInbox.Core.Entities;
 using CargoInbox.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
@@ -6,7 +7,21 @@ namespace CargoInbox.Application.Services;
 
 public class ContactCaptureService(CargoInboxContext context)
 {
-    public async Task<string> GetOrCreateContactAsync(string email, string? tenantId = null)
+    private static readonly Regex EmailRegex = new(
+        @"[\w.+-]+@[\w.-]+\.\w+",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public static string? ExtractEmailAddress(string? addressHeader)
+    {
+        if (string.IsNullOrWhiteSpace(addressHeader)) return null;
+        var match = EmailRegex.Match(addressHeader);
+        return match.Success ? match.Value.ToLowerInvariant() : null;
+    }
+
+    public Task<string> GetOrCreateContactAsync(string email, string? tenantId = null)
+        => GetOrCreateContactAsync(email, tenantId, CancellationToken.None);
+
+    public async Task<string> GetOrCreateContactAsync(string email, string? tenantId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(email)) return await GetDefaultContactIdAsync(tenantId);
 
@@ -15,13 +30,13 @@ public class ContactCaptureService(CargoInboxContext context)
         if (!string.IsNullOrEmpty(tenantId))
             query = query.Where(c => c.TenantId == tenantId || c.TenantId == "");
 
-        var existing = await query.FirstOrDefaultAsync();
+        var existing = await query.FirstOrDefaultAsync(cancellationToken);
         if (existing != null)
         {
             if (!string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(existing.TenantId))
             {
                 existing.TenantId = tenantId;
-                await context.SaveChangesAsync();
+                await context.SaveChangesAsync(cancellationToken);
             }
             return existing.Id;
         }
@@ -37,7 +52,7 @@ public class ContactCaptureService(CargoInboxContext context)
         };
 
         context.Contacts.Add(newContact);
-        await context.SaveChangesAsync();
+        await context.SaveChangesAsync(cancellationToken);
         return newContact.Id;
     }
 

@@ -416,6 +416,14 @@ public class EmailSyncEngineWorker(
 
         dbContext.ConversationMessages.Add(convMsg);
         conversation.LastMessageAt = convMsg.DateTime;
+
+        using (var contactScope = scopeFactory.CreateScope())
+        {
+            var convergence = contactScope.ServiceProvider.GetRequiredService<ContactConvergenceService>();
+            await convergence.EnsureConversationContactFromEmailAsync(
+                conversation, message.From.ToString(), tenantId, token);
+        }
+
         await dbContext.SaveChangesAsync(token);
 
         if (config != null && config.ProviderType == MailProviderType.Gmail_OAuth2)
