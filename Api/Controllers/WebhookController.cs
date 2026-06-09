@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using CargoInbox.Application.Services;
 using CargoInbox.Core.Entities;
 using CargoInbox.Infrastructure.Data;
 using Microsoft.AspNetCore.Authorization;
@@ -10,7 +11,7 @@ namespace CargoInbox.Api.Controllers;
 
 [ApiController]
 [Route("api/webhooks")]
-public class WebhookController(CargoInboxContext context) : ControllerBase
+public class WebhookController(CargoInboxContext context, LiveChatService liveChatService) : ControllerBase
 {
     [HttpPost("whatsapp")]
     public async Task<IActionResult> ReceiveWhatsApp([FromBody] JsonElement payload, [FromQuery] string verify_token = "cargoinbox_whatsapp_webhook_2026")
@@ -91,30 +92,24 @@ public class WebhookController(CargoInboxContext context) : ControllerBase
     [HttpPost("livechat")]
     public async Task<IActionResult> ReceiveLiveChat([FromBody] LiveChatPayload payload)
     {
-        var conversation = new Conversation
-        {
-            UserId = "livechat-channel",
-            Title = $"LiveChat: {(payload.VisitorName?.Length > 30 ? payload.VisitorName[..30] + "..." : payload.VisitorName ?? "Visitor")}",
-            Channel = MessageChannel.LiveChat,
-            Status = MailStatus.Open,
-            LastMessageAt = DateTime.UtcNow
-        };
-        context.Conversations.Add(conversation);
-        await context.SaveChangesAsync();
+        var widget = await liveChatService.EnsureDefaultWidgetAsync("default");
+        var visitorId = !string.IsNullOrWhiteSpace(payload.VisitorEmail)
+            ? payload.VisitorEmail.Trim().ToLower()
+            : Guid.NewGuid().ToString("N");
 
-        context.ConversationMessages.Add(new ConversationMessage
+        var session = await liveChatService.StartOrResumeSessionAsync(
+            widget.PublicKey, visitorId, payload.VisitorName, payload.VisitorEmail);
+        if (session == null) return BadRequest(new { error = "Live chat widget disabled" });
+
+        if (!string.IsNullOrWhiteSpace(payload.Message))
+            await liveChatService.SendVisitorMessageAsync(session.SessionToken, payload.Message);
+
+        return Ok(new
         {
-            ConversationId = conversation.Id,
-            FromAddress = payload.VisitorEmail ?? "visitor@cargoinbox.cn",
-            ToAddress = "livechat@cargoinbox.cn",
-            Subject = $"LiveChat: {payload.VisitorName ?? "Visitor"}",
-            TextBody = payload.Message ?? "",
-            HtmlBody = $"<p>{payload.Message}</p>",
-            DateTime = DateTime.UtcNow
+            status = "received",
+            conversationId = session.ConversationId,
+            sessionToken = session.SessionToken
         });
-        await context.SaveChangesAsync();
-
-        return Ok(new { status = "received", conversationId = conversation.Id });
     }
 
     [HttpGet("whatsapp")]

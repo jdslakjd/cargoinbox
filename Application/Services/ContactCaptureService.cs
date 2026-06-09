@@ -75,6 +75,67 @@ public class ContactCaptureService(CargoInboxContext context)
         return newContact.Id;
     }
 
+    public async Task<string> GetOrCreateLiveChatVisitorAsync(
+        string visitorId,
+        string? name,
+        string? email,
+        string tenantId)
+    {
+        if (string.IsNullOrWhiteSpace(visitorId))
+            return await GetDefaultContactIdAsync(tenantId);
+
+        var existing = await context.Contacts
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(c =>
+                c.LiveChatVisitorId == visitorId
+                && (c.TenantId == tenantId || c.TenantId == ""));
+
+        if (existing != null)
+        {
+            var changed = false;
+            if (!string.IsNullOrEmpty(tenantId) && string.IsNullOrEmpty(existing.TenantId))
+            {
+                existing.TenantId = tenantId;
+                changed = true;
+            }
+            if (!string.IsNullOrWhiteSpace(name) && existing.Name.StartsWith("Visitor "))
+            {
+                existing.Name = name.Trim();
+                changed = true;
+            }
+            if (!string.IsNullOrWhiteSpace(email) && string.IsNullOrEmpty(existing.Email))
+            {
+                existing.Email = email.Trim().ToLower();
+                changed = true;
+            }
+            if (changed)
+            {
+                existing.UpdatedAt = DateTime.UtcNow;
+                await context.SaveChangesAsync();
+            }
+            return existing.Id;
+        }
+
+        var displayName = !string.IsNullOrWhiteSpace(name)
+            ? name.Trim()
+            : $"Visitor {visitorId[..Math.Min(8, visitorId.Length)]}";
+
+        var contact = new Contact
+        {
+            TenantId = tenantId,
+            LiveChatVisitorId = visitorId,
+            Name = displayName,
+            Email = string.IsNullOrWhiteSpace(email) ? null : email.Trim().ToLower(),
+            LeadSource = "LiveChat",
+            Notes = "Live chat widget visitor",
+            UpdatedAt = DateTime.UtcNow
+        };
+
+        context.Contacts.Add(contact);
+        await context.SaveChangesAsync();
+        return contact.Id;
+    }
+
     private async Task<string> GetDefaultContactIdAsync(string? tenantId)
     {
         var query = context.Contacts.Where(c => c.Email == "anonymous@cargoinbox.cn");

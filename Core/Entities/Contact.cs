@@ -17,6 +17,7 @@ public class Contact
     public List<string> Tags { get; set; } = [];
     public string? Notes { get; set; }
     public string? FacebookPsid { get; set; }
+    public string? LiveChatVisitorId { get; set; }
     public string? TikTokLeadId { get; set; }
     public string? LeadSource { get; set; }
     public ContactStatus LifecycleStatus { get; set; } = ContactStatus.NewLead;

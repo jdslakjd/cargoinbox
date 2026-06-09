@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CargoInbox Live Chat Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #f1f5f9; margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .card { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 8px 30px rgba(0,0,0,.08); max-width: 420px; text-align: center; }
+    h1 { font-size: 18px; margin: 0 0 8px; color: #0f172a; }
+    p { color: #64748b; font-size: 14px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Live Chat Widget Demo</h1>
+    <p>Use the chat bubble in the corner to test your CargoInbox widget. Messages appear in Inbox and Service → Tickets.</p>
+  </div>
+  <script>
+    (function () {
+      var params = new URLSearchParams(location.search);
+      var key = params.get('key') || 'demo';
+      var s = document.createElement('script');
+      s.src = '/widget/cargoinbox-widget.js';
+      s.setAttribute('data-widget-key', key);
+      s.async = true;
+      document.body.appendChild(s);
+    })();
+  </script>
+</body>
+</html>

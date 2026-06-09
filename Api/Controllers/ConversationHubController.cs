@@ -480,6 +480,22 @@ public class ConversationHubController(
                     };
                     context.ConversationMessages.Add(outboundMessage);
                     break;
+                case MessageChannel.LiveChat:
+                    outboundMessage = new ConversationMessage
+                    {
+                        ConversationId = conversation.Id,
+                        FromAddress = $"agent:{CurrentUserId}@livechat.cargoinbox",
+                        ToAddress = LiveChatService.LiveChatVisitorAddress(
+                            contact.LiveChatVisitorId ?? contact.Id),
+                        Subject = $"Reply from {CurrentUserName}",
+                        TextBody = request.TextContent,
+                        HtmlBody = htmlContent,
+                        DateTime = DateTime.UtcNow,
+                        Type = MessageType.InstantMessage,
+                        TenantId = tenantProvider.TenantId
+                    };
+                    context.ConversationMessages.Add(outboundMessage);
+                    break;
                 default:
                     outboundMessage = new ConversationMessage
                     {

@@ -40,6 +40,8 @@ public class CargoInboxContext : DbContext
     public DbSet<CrmSegment> CrmSegments => Set<CrmSegment>();
     public DbSet<ServiceTicket> ServiceTickets => Set<ServiceTicket>();
     public DbSet<RoutingQueueCursor> RoutingQueueCursors => Set<RoutingQueueCursor>();
+    public DbSet<LiveChatWidget> LiveChatWidgets => Set<LiveChatWidget>();
+    public DbSet<LiveChatSession> LiveChatSessions => Set<LiveChatSession>();
     public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
     public DbSet<Draft> Drafts => Set<Draft>();
     public DbSet<UserSignature> UserSignatures => Set<UserSignature>();
@@ -104,6 +106,7 @@ public class CargoInboxContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.Email).IsUnique();
+            entity.HasIndex(e => new { e.TenantId, e.LiveChatVisitorId });
             entity.Property(e => e.Tags).HasColumnType("text[]");
             entity.HasOne(c => c.LinkedCompany)
                   .WithMany(co => co.Contacts)
@@ -219,6 +222,25 @@ public class CargoInboxContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => new { e.TenantId, e.ScopeKey }).IsUnique();
             entity.HasQueryFilter(c => c.TenantId == _tenantProvider.TenantId);
+        });
+
+        modelBuilder.Entity<LiveChatWidget>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.TenantId).IsUnique();
+            entity.HasIndex(e => e.PublicKey).IsUnique();
+            entity.HasQueryFilter(w => w.TenantId == _tenantProvider.TenantId);
+        });
+
+        modelBuilder.Entity<LiveChatSession>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.WidgetId, e.VisitorId });
+            entity.HasIndex(e => e.ConversationId);
+            entity.HasOne(s => s.Widget).WithMany().HasForeignKey(s => s.WidgetId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(s => s.Contact).WithMany().HasForeignKey(s => s.ContactId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(s => s.Conversation).WithMany().HasForeignKey(s => s.ConversationId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasQueryFilter(s => s.TenantId == _tenantProvider.TenantId);
         });
 
         modelBuilder.Entity<Mail>(entity =>

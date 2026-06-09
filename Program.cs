@@ -129,6 +129,7 @@ builder.Services.AddScoped<CrmTimelineService>();
 builder.Services.AddScoped<PipelineService>();
 builder.Services.AddScoped<RoundRobinAssignmentService>();
 builder.Services.AddScoped<TicketService>();
+builder.Services.AddScoped<LiveChatService>();
 builder.Services.AddScoped<CrmCustomFieldService>();
 builder.Services.AddSingleton<CrmSegmentEvaluator>();
 builder.Services.AddHostedService<ScheduledMessageWorker>();
@@ -173,6 +174,7 @@ app.UseSwaggerUI(c =>
 
 app.UseRequestLocalization();
 app.UseMiddleware<CargoInbox.Api.Middleware.RateLimitMiddleware>();
+app.UseStaticFiles();
 app.UseCors("AngularCors");
 app.UseAuthentication();
 app.UseAuthorization();
