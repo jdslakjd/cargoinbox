@@ -17,10 +17,20 @@ public class DraftCollaborationController(
     CargoInboxContext context,
     IHubContext<CollaborationHub> hubContext,
     MailSendService mailSendService,
-    ITenantProvider tenantProvider) : ControllerBase
+    ITenantProvider tenantProvider,
+    InboxPermissionService inboxPermissionService) : ControllerBase
 {
     private string CurrentUserId => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "system-user";
     private string CurrentUserName => User.FindFirstValue(ClaimTypes.Name) ?? "Anonymous";
+    private bool IsAdmin => InboxPermissionService.IsAdmin(User);
+
+    private async Task<IActionResult?> DenyUnlessCanAccessAsync(string conversationId)
+    {
+        if (!await inboxPermissionService.CanAccessConversationAsync(
+                CurrentUserId, tenantProvider.TenantId, IsAdmin, conversationId))
+            return Forbid();
+        return null;
+    }
 
     private async Task<bool> CanApproveDraftAsync(string draftCreatorUserId)
     {
@@ -34,6 +44,9 @@ public class DraftCollaborationController(
     [HttpGet]
     public async Task<IActionResult> GetDraft(string conversationId)
     {
+        var denied = await DenyUnlessCanAccessAsync(conversationId);
+        if (denied != null) return denied;
+
         var draft = await context.ConversationDrafts.AsNoTracking()
             .FirstOrDefaultAsync(d => d.ConversationId == conversationId);
         if (draft == null) return NotFound(new { message = "暂无草稿" });
@@ -48,6 +61,9 @@ public class DraftCollaborationController(
     [HttpPut]
     public async Task<IActionResult> SaveDraft(string conversationId, [FromBody] ConversationDraft input)
     {
+        var denied = await DenyUnlessCanAccessAsync(conversationId);
+        if (denied != null) return denied;
+
         var draft = await context.ConversationDrafts.FirstOrDefaultAsync(d => d.ConversationId == conversationId);
         if (draft != null && draft.IsLockedForApproval)
             return StatusCode(403, new { message = "该草稿目前正处于主管审批锁定状态，禁止他人修改。" });
@@ -79,6 +95,9 @@ public class DraftCollaborationController(
     [HttpPost("submit-approval")]
     public async Task<IActionResult> SubmitApproval(string conversationId)
     {
+        var denied = await DenyUnlessCanAccessAsync(conversationId);
+        if (denied != null) return denied;
+
         var draft = await context.ConversationDrafts.FirstOrDefaultAsync(d => d.ConversationId == conversationId);
         if (draft == null) return NotFound(new { message = "没有找到草稿，无法发起审批" });
 
@@ -100,6 +119,9 @@ public class DraftCollaborationController(
     [HttpPost("approve-and-send")]
     public async Task<IActionResult> ApproveAndSend(string conversationId, [FromQuery] bool isApproved)
     {
+        var denied = await DenyUnlessCanAccessAsync(conversationId);
+        if (denied != null) return denied;
+
         var draft = await context.ConversationDrafts.FirstOrDefaultAsync(d => d.ConversationId == conversationId);
         if (draft == null) return NotFound();
 

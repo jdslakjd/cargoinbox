@@ -16,8 +16,7 @@ namespace CargoInbox.Api.Controllers;
 public class InboundWebhookController(
     CargoInboxContext context,
     ContactCaptureService contactService,
-    RulesEngineProcessor rulesEngine,
-    IEmbeddingService embeddingService,
+    InboundConversationService inboundConversationService,
     IHubContext<CollaborationHub> hubContext,
     IConfiguration configuration) : ControllerBase
 {
@@ -82,40 +81,20 @@ public class InboundWebhookController(
 
             var tenantId = await ResolveWhatsAppTenantIdAsync(value);
 
-            string contactId = await contactService.GetOrCreateContactByPhoneAsync(fromPhone);
-            await EnsureContactTenantAsync(contactId, tenantId);
+            string contactId = await contactService.GetOrCreateContactByPhoneAsync(fromPhone, tenantId);
 
-            var conversation = new Conversation
-            {
-                TenantId = tenantId,
-                UserId = "whatsapp-channel",
-                Title = $"WhatsApp 往来: {fromPhone}",
-                Channel = MessageChannel.WhatsApp,
-                Status = MailStatus.Open,
-                ContactId = contactId,
-                LastMessageAt = DateTime.UtcNow
-            };
-            context.Conversations.Add(conversation);
-            await context.SaveChangesAsync();
-
-            var message = new ConversationMessage
-            {
-                TenantId = tenantId,
-                ConversationId = conversation.Id,
-                FromAddress = fromPhone,
-                ToAddress = "whatsapp@cargoinbox.cn",
-                Subject = "WhatsApp Instant Message",
-                TextBody = textBody,
-                HtmlBody = $"<p>{textBody}</p>",
-                DateTime = DateTime.UtcNow,
-                Type = MessageType.InstantMessage
-            };
-            context.ConversationMessages.Add(message);
-            await context.SaveChangesAsync();
-
-            await embeddingService.VectorizeAndSaveAsync(message.Id, textBody);
-
-            await rulesEngine.ProcessConversationAsync(conversation, message);
+            var (conversation, message, isNew) = await inboundConversationService.AppendOrCreateAsync(
+                new InboundConversationService.InboundMessageRequest(
+                    tenantId,
+                    contactId,
+                    MessageChannel.WhatsApp,
+                    fromPhone,
+                    "whatsapp@cargoinbox.cn",
+                    "WhatsApp Instant Message",
+                    textBody,
+                    $"<p>{textBody}</p>",
+                    "whatsapp-channel",
+                    $"WhatsApp 往来: {fromPhone}"));
 
             context.ActivityLogs.Add(new ActivityLog
             {
@@ -123,14 +102,33 @@ public class InboundWebhookController(
                 ConversationId = conversation.Id,
                 UserId = "system-webhook",
                 UserName = "WhatsApp网关",
-                Action = "InboundWhatsApp",
-                Detail = $"WhatsApp 消息入站: {fromPhone}"
+                Action = isNew ? "InboundWhatsApp" : "InboundWhatsAppReply",
+                Detail = isNew
+                    ? $"WhatsApp 消息入站: {fromPhone}"
+                    : $"WhatsApp 续聊消息: {fromPhone}"
             });
             await context.SaveChangesAsync();
 
-            await hubContext.Clients.All.SendAsync("OnGlobalNewConversationReceived", new { conversationId = conversation.Id, channel = "WhatsApp", snippet = textBody.Length > 120 ? textBody[..120] : textBody });
+            if (isNew)
+            {
+                await hubContext.Clients.All.SendAsync("OnGlobalNewConversationReceived", new
+                {
+                    conversationId = conversation.Id,
+                    channel = "WhatsApp",
+                    snippet = textBody.Length > 120 ? textBody[..120] : textBody
+                });
+            }
+            else
+            {
+                await hubContext.Clients.Group($"conversation_{conversation.Id}").SendAsync("OnNewMessageReceived", new
+                {
+                    conversationId = conversation.Id,
+                    messageSnippet = textBody.Length > 120 ? textBody[..120] : textBody,
+                    senderName = fromPhone
+                });
+            }
 
-            return Ok(new { success = true });
+            return Ok(new { success = true, conversationId = conversation.Id, isNewThread = isNew });
         }
         catch (Exception ex)
         {
@@ -284,37 +282,39 @@ public class InboundWebhookController(
                 await context.SaveChangesAsync();
             }
 
-            var conversation = new Conversation
+            var (conversation, message, isNew) = await inboundConversationService.AppendOrCreateAsync(
+                new InboundConversationService.InboundMessageRequest(
+                    tenantId,
+                    contact.Id,
+                    MessageChannel.Facebook,
+                    senderPsid,
+                    "facebook@cargoinbox.cn",
+                    "Facebook Messenger Private Chat",
+                    messageText,
+                    $"<p>{messageText}</p>",
+                    "facebook-channel",
+                    $"💬 Facebook 实时私信: {contact.Name}"));
+
+            if (isNew)
             {
-                TenantId = tenantId,
-                UserId = "facebook-channel",
-                Title = $"💬 Facebook 实时私信: {contact.Name}",
-                Channel = MessageChannel.Facebook,
-                Status = MailStatus.Open,
-                ContactId = contact.Id,
-                LastMessageAt = DateTime.UtcNow
-            };
-            context.Conversations.Add(conversation);
-            await context.SaveChangesAsync();
-
-            var message = new ConversationMessage
+                await hubContext.Clients.All.SendAsync("OnGlobalNewConversationReceived", new
+                {
+                    conversationId = conversation.Id,
+                    channel = "Facebook",
+                    snippet = messageText.Length > 120 ? messageText[..120] : messageText
+                });
+            }
+            else
             {
-                TenantId = tenantId,
-                ConversationId = conversation.Id,
-                FromAddress = senderPsid,
-                ToAddress = "facebook@cargoinbox.cn",
-                Subject = "Facebook Messenger Private Chat",
-                TextBody = messageText,
-                HtmlBody = $"<p>{messageText}</p>",
-                DateTime = DateTime.UtcNow,
-                Type = MessageType.InstantMessage
-            };
-            context.ConversationMessages.Add(message);
-            await context.SaveChangesAsync();
+                await hubContext.Clients.Group($"conversation_{conversation.Id}").SendAsync("OnNewMessageReceived", new
+                {
+                    conversationId = conversation.Id,
+                    messageSnippet = messageText.Length > 120 ? messageText[..120] : messageText,
+                    senderName = contact.Name
+                });
+            }
 
-            await hubContext.Clients.All.SendAsync("OnGlobalNewConversationReceived", new { conversationId = conversation.Id, channel = "Facebook", snippet = messageText.Length > 120 ? messageText[..120] : messageText });
-
-            return Ok(new { success = true });
+            return Ok(new { success = true, conversationId = conversation.Id, isNewThread = isNew });
         }
         catch (Exception ex)
         {
@@ -355,15 +355,5 @@ public class InboundWebhookController(
         }
 
         return "default";
-    }
-
-    private async Task EnsureContactTenantAsync(string contactId, string tenantId)
-    {
-        var contact = await context.Contacts.FindAsync(contactId);
-        if (contact != null && string.IsNullOrEmpty(contact.TenantId))
-        {
-            contact.TenantId = tenantId;
-            await context.SaveChangesAsync();
-        }
     }
 }

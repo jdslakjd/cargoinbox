@@ -317,14 +317,30 @@ public class EmailSyncEngineWorker(
                 var message = await imapInbox.GetMessageAsync(summary.UniqueId, token);
                 var subject = message.Subject ?? "(无主题)";
 
-                var conversation = new Conversation { UserId = "shared", SharedInboxId = inbox.Id, Title = subject, Channel = MessageChannel.Email, Status = MailStatus.Open, LastMessageAt = message.Date.UtcDateTime };
+                var conversation = new Conversation
+                {
+                    TenantId = inbox.TenantId,
+                    UserId = "shared",
+                    SharedInboxId = inbox.Id,
+                    Title = subject,
+                    Channel = MessageChannel.Email,
+                    Status = MailStatus.Open,
+                    LastMessageAt = message.Date.UtcDateTime
+                };
                 dbContext.Conversations.Add(conversation);
                 await dbContext.SaveChangesAsync(token);
 
                 var convMsg = new ConversationMessage
                 {
-                    Id = uidStr, ConversationId = conversation.Id, FromAddress = message.From.ToString(), ToAddress = message.To.ToString(),
-                    Subject = subject, TextBody = message.TextBody ?? string.Empty, HtmlBody = message.HtmlBody ?? message.TextBody ?? string.Empty, DateTime = message.Date.UtcDateTime
+                    Id = uidStr,
+                    TenantId = inbox.TenantId,
+                    ConversationId = conversation.Id,
+                    FromAddress = message.From.ToString(),
+                    ToAddress = message.To.ToString(),
+                    Subject = subject,
+                    TextBody = message.TextBody ?? string.Empty,
+                    HtmlBody = message.HtmlBody ?? message.TextBody ?? string.Empty,
+                    DateTime = message.Date.UtcDateTime
                 };
 
                 dbContext.ConversationMessages.Add(convMsg);

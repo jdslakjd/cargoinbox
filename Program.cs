@@ -123,6 +123,7 @@ builder.Services.AddScoped<AiTranslationService>();
 builder.Services.AddScoped<TemplateVariableEngine>();
 builder.Services.AddScoped<ChannelOutboundService>();
 builder.Services.AddScoped<InboxPermissionService>();
+builder.Services.AddScoped<InboundConversationService>();
 builder.Services.AddHostedService<ScheduledMessageWorker>();
 builder.Services.AddScoped<CalendarCollisionService>();
 builder.Services.AddSingleton<MailResiliencePolicy>();
