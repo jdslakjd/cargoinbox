@@ -103,3 +103,43 @@ public class Deal
     public Contact? Contact { get; set; }
     public Company? Company { get; set; }
 }
+
+public enum CrmEntityType { Contact = 0, Company = 1, Deal = 2 }
+
+public enum CrmFieldType { Text = 0, Number = 1, Date = 2, Select = 3, Boolean = 4 }
+
+public class CrmFieldDefinition
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
+    public CrmEntityType EntityType { get; set; }
+    public string FieldKey { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public CrmFieldType FieldType { get; set; } = CrmFieldType.Text;
+    public string OptionsJson { get; set; } = "[]";
+    public int SortOrder { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class CrmFieldValue
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
+    public string FieldDefinitionId { get; set; } = string.Empty;
+    public string EntityId { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
+
+    public CrmFieldDefinition? FieldDefinition { get; set; }
+}
+
+public class CrmSegment
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public string FilterJson { get; set; } = "{\"match\":\"all\",\"rules\":[]}";
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+}

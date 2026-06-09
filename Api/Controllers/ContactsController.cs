@@ -15,7 +15,8 @@ public class ContactsController(
     CargoInboxContext context,
     ITenantProvider tenantProvider,
     CrmActivityService crmActivity,
-    CrmTimelineService timelineService) : ControllerBase
+    CrmTimelineService timelineService,
+    CrmCustomFieldService customFieldService) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetContacts(
@@ -74,6 +75,8 @@ public class ContactsController(
             .FirstOrDefaultAsync(c => c.Id == id);
         if (contact == null) return NotFound();
 
+        var customFields = await customFieldService.GetValuesAsync(CrmEntityType.Contact, id);
+
         return Ok(new
         {
             contact.Id,
@@ -92,6 +95,7 @@ public class ContactsController(
             contact.LifecycleStatus,
             contact.CreatedAt,
             contact.UpdatedAt,
+            customFields,
             LinkedCompany = contact.LinkedCompany == null ? null : new
             {
                 contact.LinkedCompany.Id,
@@ -124,6 +128,9 @@ public class ContactsController(
 
         context.Contacts.Add(contact);
         await context.SaveChangesAsync();
+
+        if (request.CustomFields != null)
+            await customFieldService.SaveValuesAsync(CrmEntityType.Contact, contact.Id, request.CustomFields, tenantProvider.TenantId);
 
         await crmActivity.LogAsync(
             CrmActivityType.ProfileUpdate,
@@ -187,6 +194,9 @@ public class ContactsController(
                 userId: userId,
                 userName: userName);
         }
+
+        if (request.CustomFields != null)
+            await customFieldService.SaveValuesAsync(CrmEntityType.Contact, contact.Id, request.CustomFields, tenantProvider.TenantId);
 
         return Ok(contact);
     }
@@ -301,7 +311,8 @@ public class ContactsController(
         string? OwnerUserId,
         string? OwnerUserName,
         List<string>? Tags,
-        ContactStatus? LifecycleStatus);
+        ContactStatus? LifecycleStatus,
+        Dictionary<string, string>? CustomFields);
 
     public record ContactUpdateRequest(
         string Name,
@@ -314,7 +325,8 @@ public class ContactsController(
         string? OwnerUserId,
         string? OwnerUserName,
         List<string>? Tags,
-        ContactStatus LifecycleStatus);
+        ContactStatus LifecycleStatus,
+        Dictionary<string, string>? CustomFields);
 
     public record AddNoteRequest(string Body, string? Title);
 }
