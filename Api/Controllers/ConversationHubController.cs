@@ -23,7 +23,8 @@ public class ConversationHubController(
     AiTranslationService translationService,
     SlaTrackerService slaTrackerService,
     ChannelOutboundService channelOutboundService,
-    InboxPermissionService inboxPermissionService) : ControllerBase
+    InboxPermissionService inboxPermissionService,
+    TicketService ticketService) : ControllerBase
 {
     private string CurrentUserId => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "system-user";
     private string CurrentUserName => User.FindFirstValue(ClaimTypes.Name) ?? "Anonymous";
@@ -728,6 +729,7 @@ public class ConversationHubController(
             TenantId = tenantProvider.TenantId
         });
         await context.SaveChangesAsync();
+        await ticketService.SyncFromConversationIdAsync(id);
 
         await hubContext.Clients.Group(tenantProvider.TenantId).SendAsync("OnConversationGlobalStatusChanged", new
         {
@@ -843,6 +845,7 @@ public class ConversationHubController(
         conv.Status = MailStatus.Assigned;
 
         await context.SaveChangesAsync();
+        await ticketService.SyncFromConversationIdAsync(id);
 
         await hubContext.Clients.All.SendAsync("OnConversationGlobalStatusChanged", new
         {

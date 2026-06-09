@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace CargoInbox.Application.Services;
 
-public class SlaTrackerService(CargoInboxContext context)
+public class SlaTrackerService(CargoInboxContext context, TicketService ticketService)
 {
     public async Task<List<Conversation>> CheckAndMarkSlaBreachesAsync()
     {
@@ -57,7 +57,11 @@ public class SlaTrackerService(CargoInboxContext context)
         }
 
         if (newlyBreached.Count > 0)
+        {
             await context.SaveChangesAsync();
+            foreach (var conv in newlyBreached)
+                await ticketService.SyncSlaFromConversationAsync(conv.Id);
+        }
 
         return newlyBreached;
     }
@@ -71,6 +75,7 @@ public class SlaTrackerService(CargoInboxContext context)
         conv.SlaBreachAt = null;
         conv.IsSlaBreached = false;
         await context.SaveChangesAsync();
+        await ticketService.SyncSlaFromConversationAsync(conversationId);
     }
 
     public async Task MarkResolvedAsync(string conversationId)
@@ -79,5 +84,6 @@ public class SlaTrackerService(CargoInboxContext context)
         if (conv == null) return;
         conv.ResolvedAt = DateTime.UtcNow;
         await context.SaveChangesAsync();
+        await ticketService.SyncSlaFromConversationAsync(conversationId);
     }
 }

@@ -38,6 +38,8 @@ public class CargoInboxContext : DbContext
     public DbSet<CrmFieldDefinition> CrmFieldDefinitions => Set<CrmFieldDefinition>();
     public DbSet<CrmFieldValue> CrmFieldValues => Set<CrmFieldValue>();
     public DbSet<CrmSegment> CrmSegments => Set<CrmSegment>();
+    public DbSet<ServiceTicket> ServiceTickets => Set<ServiceTicket>();
+    public DbSet<RoutingQueueCursor> RoutingQueueCursors => Set<RoutingQueueCursor>();
     public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
     public DbSet<Draft> Drafts => Set<Draft>();
     public DbSet<UserSignature> UserSignatures => Set<UserSignature>();
@@ -190,6 +192,33 @@ public class CargoInboxContext : DbContext
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.TenantId);
             entity.HasQueryFilter(s => s.TenantId == _tenantProvider.TenantId);
+        });
+
+        modelBuilder.Entity<ServiceTicket>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.TenantId, e.Number }).IsUnique();
+            entity.HasIndex(e => e.ConversationId).IsUnique();
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.AssignedToUserId);
+            entity.HasIndex(e => e.IsSlaBreached);
+            entity.Property(e => e.Tags).HasColumnType("text[]");
+            entity.HasOne(t => t.Conversation)
+                  .WithMany()
+                  .HasForeignKey(t => t.ConversationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(t => t.Contact)
+                  .WithMany()
+                  .HasForeignKey(t => t.ContactId)
+                  .OnDelete(DeleteBehavior.SetNull);
+            entity.HasQueryFilter(t => t.TenantId == _tenantProvider.TenantId);
+        });
+
+        modelBuilder.Entity<RoutingQueueCursor>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.TenantId, e.ScopeKey }).IsUnique();
+            entity.HasQueryFilter(c => c.TenantId == _tenantProvider.TenantId);
         });
 
         modelBuilder.Entity<Mail>(entity =>
