@@ -126,6 +126,7 @@ builder.Services.AddScoped<InboxPermissionService>();
 builder.Services.AddScoped<InboundConversationService>();
 builder.Services.AddScoped<CrmActivityService>();
 builder.Services.AddScoped<CrmTimelineService>();
+builder.Services.AddScoped<PipelineService>();
 builder.Services.AddHostedService<ScheduledMessageWorker>();
 builder.Services.AddScoped<CalendarCollisionService>();
 builder.Services.AddSingleton<MailResiliencePolicy>();

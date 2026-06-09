@@ -32,6 +32,9 @@ public class CargoInboxContext : DbContext
     public DbSet<Contact> Contacts => Set<Contact>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CrmActivity> CrmActivities => Set<CrmActivity>();
+    public DbSet<Pipeline> Pipelines => Set<Pipeline>();
+    public DbSet<PipelineStage> PipelineStages => Set<PipelineStage>();
+    public DbSet<Deal> Deals => Set<Deal>();
     public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
     public DbSet<Draft> Drafts => Set<Draft>();
     public DbSet<UserSignature> UserSignatures => Set<UserSignature>();
@@ -127,6 +130,38 @@ public class CargoInboxContext : DbContext
                   .HasForeignKey(a => a.CompanyId)
                   .OnDelete(DeleteBehavior.Cascade);
             entity.HasQueryFilter(a => a.TenantId == _tenantProvider.TenantId);
+        });
+
+        modelBuilder.Entity<Pipeline>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.TenantId, e.IsDefault });
+            entity.HasQueryFilter(p => p.TenantId == _tenantProvider.TenantId);
+        });
+
+        modelBuilder.Entity<PipelineStage>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.PipelineId, e.SortOrder });
+            entity.HasOne(s => s.Pipeline)
+                  .WithMany(p => p.Stages)
+                  .HasForeignKey(s => s.PipelineId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasQueryFilter(s => s.TenantId == _tenantProvider.TenantId);
+        });
+
+        modelBuilder.Entity<Deal>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.PipelineId);
+            entity.HasIndex(e => e.StageId);
+            entity.HasIndex(e => e.ContactId);
+            entity.HasIndex(e => e.Status);
+            entity.HasOne(d => d.Pipeline).WithMany(p => p.Deals).HasForeignKey(d => d.PipelineId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(d => d.Stage).WithMany().HasForeignKey(d => d.StageId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(d => d.Contact).WithMany().HasForeignKey(d => d.ContactId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(d => d.Company).WithMany().HasForeignKey(d => d.CompanyId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasQueryFilter(d => d.TenantId == _tenantProvider.TenantId);
         });
 
         modelBuilder.Entity<Mail>(entity =>
