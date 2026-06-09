@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using CargoInbox.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pgvector;
@@ -13,9 +14,11 @@ using Pgvector;
 namespace CargoInbox.Infrastructure.Migrations
 {
     [DbContext(typeof(CargoInboxContext))]
-    partial class CargoInboxContextModelSnapshot : ModelSnapshot
+    [Migration("20260609101238_AddInternetMessageId")]
+    partial class AddInternetMessageId
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -305,60 +308,12 @@ namespace CargoInbox.Infrastructure.Migrations
                     b.ToTable("CallLogs");
                 });
 
-            modelBuilder.Entity("CargoInbox.Core.Entities.Company", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Domain")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Industry")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Notes")
-                        .HasColumnType("text");
-
-                    b.Property<string>("OwnerUserId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("OwnerUserName")
-                        .HasColumnType("text");
-
-                    b.PrimitiveCollection<List<string>>("Tags")
-                        .IsRequired()
-                        .HasColumnType("text[]");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TenantId", "Name");
-
-                    b.ToTable("Companies");
-                });
-
             modelBuilder.Entity("CargoInbox.Core.Entities.Contact", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("text");
 
                     b.Property<string>("Company")
-                        .HasColumnType("text");
-
-                    b.Property<string>("CompanyId")
                         .HasColumnType("text");
 
                     b.Property<DateTime>("CreatedAt")
@@ -383,18 +338,8 @@ namespace CargoInbox.Infrastructure.Migrations
                     b.Property<string>("Notes")
                         .HasColumnType("text");
 
-                    b.Property<string>("OwnerUserId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("OwnerUserName")
-                        .HasColumnType("text");
-
                     b.Property<string>("Phone")
                         .HasColumnType("text");
-
-                    b.PrimitiveCollection<List<string>>("Tags")
-                        .IsRequired()
-                        .HasColumnType("text[]");
 
                     b.Property<string>("TenantId")
                         .IsRequired()
@@ -403,12 +348,7 @@ namespace CargoInbox.Infrastructure.Migrations
                     b.Property<string>("TikTokLeadId")
                         .HasColumnType("text");
 
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
-
                     b.HasKey("Id");
-
-                    b.HasIndex("CompanyId");
 
                     b.HasIndex("Email")
                         .IsUnique();
@@ -618,56 +558,6 @@ namespace CargoInbox.Infrastructure.Migrations
                         .HasFilter("\"InternetMessageId\" IS NOT NULL");
 
                     b.ToTable("ConversationMessages");
-                });
-
-            modelBuilder.Entity("CargoInbox.Core.Entities.CrmActivity", b =>
-                {
-                    b.Property<string>("Id")
-                        .HasColumnType("text");
-
-                    b.Property<string>("Body")
-                        .HasColumnType("text");
-
-                    b.Property<string>("CompanyId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("ContactId")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("RelatedEntityId")
-                        .HasColumnType("text");
-
-                    b.Property<string>("TenantId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("Title")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("Type")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("UserName")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CompanyId");
-
-                    b.HasIndex("ContactId");
-
-                    b.HasIndex("CreatedAt");
-
-                    b.ToTable("CrmActivities");
                 });
 
             modelBuilder.Entity("CargoInbox.Core.Entities.Customer", b =>
@@ -1525,7 +1415,7 @@ namespace CargoInbox.Infrastructure.Migrations
                         new
                         {
                             Id = "default",
-                            CreatedAt = new DateTime(2026, 6, 9, 10, 50, 43, 937, DateTimeKind.Utc).AddTicks(731),
+                            CreatedAt = new DateTime(2026, 6, 9, 10, 12, 38, 472, DateTimeKind.Utc).AddTicks(2956),
                             Domain = "cargoinbox.cn",
                             IsActive = true,
                             Name = "默认租户"
@@ -1753,18 +1643,11 @@ namespace CargoInbox.Infrastructure.Migrations
 
             modelBuilder.Entity("CargoInbox.Core.Entities.Contact", b =>
                 {
-                    b.HasOne("CargoInbox.Core.Entities.Company", "LinkedCompany")
-                        .WithMany("Contacts")
-                        .HasForeignKey("CompanyId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("CargoInbox.Core.Entities.Tenant", null)
                         .WithMany("Contacts")
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-
-                    b.Navigation("LinkedCompany");
                 });
 
             modelBuilder.Entity("CargoInbox.Core.Entities.Conversation", b =>
@@ -1804,23 +1687,6 @@ namespace CargoInbox.Infrastructure.Migrations
                         .HasForeignKey("ConversationId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
-
-            modelBuilder.Entity("CargoInbox.Core.Entities.CrmActivity", b =>
-                {
-                    b.HasOne("CargoInbox.Core.Entities.Company", "Company")
-                        .WithMany()
-                        .HasForeignKey("CompanyId")
-                        .OnDelete(DeleteBehavior.Cascade);
-
-                    b.HasOne("CargoInbox.Core.Entities.Contact", "Contact")
-                        .WithMany()
-                        .HasForeignKey("ContactId")
-                        .OnDelete(DeleteBehavior.Cascade);
-
-                    b.Navigation("Company");
-
-                    b.Navigation("Contact");
                 });
 
             modelBuilder.Entity("CargoInbox.Core.Entities.MailComment", b =>
@@ -1892,11 +1758,6 @@ namespace CargoInbox.Infrastructure.Migrations
             modelBuilder.Entity("CargoInbox.Core.Entities.AutomationRule", b =>
                 {
                     b.Navigation("Conditions");
-                });
-
-            modelBuilder.Entity("CargoInbox.Core.Entities.Company", b =>
-                {
-                    b.Navigation("Contacts");
                 });
 
             modelBuilder.Entity("CargoInbox.Core.Entities.Contact", b =>

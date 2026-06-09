@@ -62,7 +62,7 @@ public class OutlookApiService(
                     ["client_secret"] = clientSecret,
                     ["refresh_token"] = token.RefreshToken,
                     ["grant_type"] = "refresh_token",
-                    ["scope"] = "https://outlook.office.com/SMTP.Send offline_access"
+                    ["scope"] = "https://outlook.office.com/IMAP.AccessAsUser.All https://outlook.office.com/SMTP.Send offline_access"
                 }));
 
             if (!response.IsSuccessStatusCode) return false;

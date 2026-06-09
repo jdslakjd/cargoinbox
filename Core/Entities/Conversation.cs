@@ -57,6 +57,8 @@ public class ConversationMessage
     public DateTime DateTime { get; set; }
     public bool IsRead { get; set; }
     public MessageType Type { get; set; } = MessageType.Email;
+    /// <summary>RFC 822 Message-Id header for email thread matching.</summary>
+    public string? InternetMessageId { get; set; }
 
     [Column(TypeName = "vector(2048)")]
     public Pgvector.Vector? Embedding { get; set; }

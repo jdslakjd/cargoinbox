@@ -363,9 +363,33 @@ public class ConversationHubController(
         var denied = await DenyUnlessCanAccessAsync(id);
         if (denied != null) return denied;
 
-        var conv = await context.Conversations.AsNoTracking().Include(c => c.Contact).FirstOrDefaultAsync(c => c.Id == id);
+        var conv = await context.Conversations.AsNoTracking()
+            .Include(c => c.Contact!)
+                .ThenInclude(ct => ct.LinkedCompany)
+            .FirstOrDefaultAsync(c => c.Id == id);
         if (conv == null) return NotFound(new { message = "会话不存在" });
-        return Ok(conv.Contact);
+        if (conv.Contact == null) return Ok(null);
+
+        var c = conv.Contact;
+        return Ok(new
+        {
+            c.Id,
+            c.TenantId,
+            c.Name,
+            c.Email,
+            c.Phone,
+            c.Company,
+            c.CompanyId,
+            CompanyName = c.LinkedCompany?.Name ?? c.Company,
+            c.OwnerUserId,
+            c.OwnerUserName,
+            c.Tags,
+            c.Notes,
+            c.LeadSource,
+            c.LifecycleStatus,
+            c.CreatedAt,
+            c.UpdatedAt
+        });
     }
 
     [HttpPut("contacts/{contactId}")]

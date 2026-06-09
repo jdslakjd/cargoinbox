@@ -5,6 +5,7 @@ using CargoInbox.Core.Entities;
 using CargoInbox.Infrastructure.Data;
 using MailKit;
 using MailKit.Net.Imap;
+using MailKit.Security;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -19,7 +20,9 @@ public class EmailSyncEngineWorker(
     IConnectionMultiplexer redis,
     IConfiguration configuration,
     ILogger<EmailSyncEngineWorker> logger,
-    GmailApiService gmailApi) : BackgroundService
+    GmailApiService gmailApi,
+    OutlookApiService outlookApi,
+    EmailThreadingService emailThreading) : BackgroundService
 {
     private readonly IDatabase _redisDb = redis.GetDatabase();
     private static readonly HttpClient _httpClient = new();
@@ -114,6 +117,12 @@ public class EmailSyncEngineWorker(
             return;
         }
 
+        if (config.ProviderType == MailProviderType.Outlook_Office365)
+        {
+            await SyncOutlookInboxAsync(config, dbContext, rulesProcessor, token);
+            return;
+        }
+
         var redisKey = $"cargoinbox:sync:last_uid:{config.Id}";
         var lastUidStr = await _redisDb.StringGetAsync(redisKey);
         uint lastUid = lastUidStr.IsNullOrEmpty ? config.LastSyncUid : uint.Parse(lastUidStr.ToString());
@@ -124,136 +133,9 @@ public class EmailSyncEngineWorker(
             await client.ConnectAsync(config.ImapHost, config.ImapPort, true, token);
             await client.AuthenticateAsync(config.EmailAddress, config.EncryptedAppPassword, token);
 
-            var inbox = client.Inbox;
-            if (inbox == null) return;
-            await inbox.OpenAsync(FolderAccess.ReadOnly, token);
-
-            IList<IMessageSummary> fetched;
-            if (lastUid > 0)
-            {
-                var range = new UniqueIdRange(new UniqueId(lastUid + 1), UniqueId.MaxValue);
-                fetched = await inbox.FetchAsync(range, MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope, token);
-            }
-            else
-            {
-                int startIdx = Math.Max(0, inbox.Count - 20);
-                fetched = await inbox.FetchAsync(startIdx, -1, MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope, token);
-            }
-
-            foreach (var summary in fetched)
-            {
-                if (token.IsCancellationRequested) break;
-
-                var uidStr = summary.UniqueId.ToString();
-                var exists = await dbContext.ConversationMessages
-                    .IgnoreQueryFilters()
-                    .AnyAsync(m => m.Id == uidStr, token);
-                if (exists) continue;
-
-                var message = await inbox.GetMessageAsync(summary.UniqueId, token);
-                var textContent = message.TextBody ?? string.Empty;
-                var subject = message.Subject ?? "(无主题)";
-
-                // Extract text from HTML when TextBody is empty
-                if (string.IsNullOrWhiteSpace(textContent) && !string.IsNullOrWhiteSpace(message.HtmlBody))
-                {
-                    textContent = GetEmbeddingText(null, message.HtmlBody);
-                }
-
-                foreach (var attachment in message.Attachments)
-                {
-                    if (attachment is MimeKit.MimePart mimePart && mimePart.Content != null)
-                    {
-                        using var memoryStream = new MemoryStream();
-                        await mimePart.Content.DecodeToAsync(memoryStream, token);
-                        memoryStream.Position = 0;
-                        var fileName = mimePart.FileName ?? $"attachment_{Guid.NewGuid():N}";
-                        using var attachmentScope = scopeFactory.CreateScope();
-                        var storageService = attachmentScope.ServiceProvider.GetRequiredService<AttachmentStorageService>();
-                        var mimeType = mimePart.ContentType?.MimeType ?? "application/octet-stream";
-                        await storageService.StoreAsync(memoryStream, fileName, mimeType, uidStr);
-                    }
-                }
-
-                var subjectPrefix = subject.Length > 15 ? subject[..15] : subject;
-                var conversation = await dbContext.Conversations
-                    .IgnoreQueryFilters()
-                    .FirstOrDefaultAsync(c => c.UserId == config.UserId
-                        && c.Title != null && c.Title.Contains(subjectPrefix), token);
-
-                if (conversation == null)
-                {
-                    conversation = new Conversation
-                    {
-                        UserId = config.UserId,
-                        TenantId = config.TenantId,
-                        Title = subject,
-                        Channel = MessageChannel.Email,
-                        Status = MailStatus.Open,
-                        LastMessageAt = message.Date.UtcDateTime
-                    };
-                    dbContext.Conversations.Add(conversation);
-                    await dbContext.SaveChangesAsync(token);
-                }
-
-                var convMsg = new ConversationMessage
-                {
-                    Id = uidStr,
-                    TenantId = config.TenantId,
-                    ConversationId = conversation.Id,
-                    FromAddress = message.From.ToString(),
-                    ToAddress = message.To.ToString(),
-                    Subject = subject,
-                    TextBody = textContent,
-                    HtmlBody = message.HtmlBody ?? textContent,
-                    DateTime = message.Date.UtcDateTime
-                };
-
-                if (!string.IsNullOrEmpty(convMsg.HtmlBody))
-                    convMsg.HtmlBody = await ReplaceCidImagesAsync(message, convMsg.HtmlBody, uidStr, token);
-
-                try
-                {
-                    var embedText = GetEmbeddingText(textContent, message.HtmlBody);
-                    if (!string.IsNullOrEmpty(embedText))
-                    {
-                        var apiKey = configuration["AISettings:ApiKey"];
-                        var endpoint = configuration["AISettings:Endpoint"];
-                        var modelId = configuration["AISettings:EmbeddingModelId"];
-                        var requestBody = new { model = modelId, input = new[] { embedText } };
-                        _httpClient.DefaultRequestHeaders.Clear();
-                        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-                        var response = await _httpClient.PostAsJsonAsync(endpoint + "/embeddings", requestBody, token);
-                        if (response.IsSuccessStatusCode)
-                        {
-                            var jsonResult = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
-                            var embeddingArray = jsonResult.GetProperty("data")[0].GetProperty("embedding").EnumerateArray().Select(x => x.GetSingle()).ToArray();
-                            convMsg.Embedding = new Pgvector.Vector(embeddingArray);
-                        }
-                    }
-                }
-                catch (Exception aiEx) { logger.LogWarning(aiEx, "AI 向量化失败，跳过"); }
-
-                dbContext.ConversationMessages.Add(convMsg);
-                conversation.LastMessageAt = convMsg.DateTime;
-                await dbContext.SaveChangesAsync(token);
-
-                await rulesProcessor.ProcessConversationAsync(conversation, convMsg);
-
-                lastUid = summary.UniqueId.Id;
-                await _redisDb.StringSetAsync(redisKey, lastUid.ToString());
-                config.LastSyncUid = lastUid;
-
-                dbContext.ActivityLogs.Add(new ActivityLog
-                {
-                    ConversationId = conversation.Id,
-                    UserId = config.UserId,
-                    UserName = config.EmailAddress,
-                    Action = "EmailSynced",
-                    Detail = $"IMAP 同步: {subject}"
-                });
-                await dbContext.SaveChangesAsync(token);
-            }
+            lastUid = await ProcessImapFolderAsync(
+                client.Inbox, lastUid, redisKey, config, null, dbContext, rulesProcessor,
+                "IMAP 同步", token);
 
             if (client.IsConnected) await client.DisconnectAsync(true);
             config.ConsecutiveFailureCount = 0;
@@ -263,18 +145,44 @@ public class EmailSyncEngineWorker(
         }
         catch (Exception ex)
         {
-            config.ConsecutiveFailureCount++;
-            if (config.ConsecutiveFailureCount >= MaxConsecutiveFailures)
+            await HandleSyncFailureAsync(config, dbContext, ex);
+        }
+    }
+
+    private async Task SyncOutlookInboxAsync(
+        UserMailConfig config, CargoInboxContext dbContext, RulesEngineProcessor rulesProcessor, CancellationToken token)
+    {
+        var redisKey = $"cargoinbox:sync:last_uid:{config.Id}";
+        var lastUidStr = await _redisDb.StringGetAsync(redisKey);
+        uint lastUid = lastUidStr.IsNullOrEmpty ? config.LastSyncUid : uint.Parse(lastUidStr.ToString());
+
+        try
+        {
+            var session = await outlookApi.GetSessionAsync(config.UserId, config.EmailAddress);
+            if (session == null)
             {
-                config.IsSuspended = true;
-                config.SuspendedUntil = DateTime.UtcNow.AddMinutes(SuspensionMinutes);
-                logger.LogError(ex, "邮箱 {Email} 连续失败 {Count} 次，已熔断至 {Until}", config.EmailAddress, MaxConsecutiveFailures, config.SuspendedUntil);
+                logger.LogWarning("Outlook 邮箱 {Email} 无可用 OAuth Token", config.EmailAddress);
+                return;
             }
-            else
-            {
-                logger.LogError(ex, "邮箱 {Email} 同步失败 ({FailureCount}/{Max})", config.EmailAddress, config.ConsecutiveFailureCount, MaxConsecutiveFailures);
-            }
+
+            using var client = new ImapClient();
+            await client.ConnectAsync(config.ImapHost, config.ImapPort, MailKit.Security.SecureSocketOptions.SslOnConnect, token);
+            var oauth2 = new SaslMechanismOAuth2(config.EmailAddress, session.AccessToken);
+            await client.AuthenticateAsync(oauth2, token);
+
+            lastUid = await ProcessImapFolderAsync(
+                client.Inbox, lastUid, redisKey, config, null, dbContext, rulesProcessor,
+                "Outlook IMAP 同步", token);
+
+            if (client.IsConnected) await client.DisconnectAsync(true);
+            config.ConsecutiveFailureCount = 0;
+            config.IsSuspended = false;
+            config.SuspendedUntil = null;
             await dbContext.SaveChangesAsync(token);
+        }
+        catch (Exception ex)
+        {
+            await HandleSyncFailureAsync(config, dbContext, ex);
         }
     }
 
@@ -291,73 +199,69 @@ public class EmailSyncEngineWorker(
             await client.ConnectAsync(inbox.ImapHost, inbox.ImapPort, true, token);
             await client.AuthenticateAsync(inbox.EmailAddress, inbox.EncryptedPassword, token);
 
-            var imapInbox = client.Inbox;
-            if (imapInbox == null) return;
-            await imapInbox.OpenAsync(FolderAccess.ReadOnly, token);
+            lastUid = await ProcessImapFolderAsync(
+                client.Inbox, lastUid, redisKey, null, inbox, dbContext, rulesProcessor,
+                "公共渠道同步", token);
 
-            IList<IMessageSummary> fetched;
-            if (lastUid > 0)
-            {
-                var range = new UniqueIdRange(new UniqueId(lastUid + 1), UniqueId.MaxValue);
-                fetched = await imapInbox.FetchAsync(range, MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope, token);
-            }
-            else
-            {
-                int startIdx = Math.Max(0, imapInbox.Count - 20);
-                fetched = await imapInbox.FetchAsync(startIdx, -1, MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope, token);
-            }
-
-            foreach (var summary in fetched)
-            {
-                if (token.IsCancellationRequested) break;
-                var uidStr = summary.UniqueId.ToString();
-                var exists = await dbContext.ConversationMessages.IgnoreQueryFilters().AnyAsync(m => m.Id == uidStr, token);
-                if (exists) continue;
-
-                var message = await imapInbox.GetMessageAsync(summary.UniqueId, token);
-                var subject = message.Subject ?? "(无主题)";
-
-                var conversation = new Conversation
-                {
-                    TenantId = inbox.TenantId,
-                    UserId = "shared",
-                    SharedInboxId = inbox.Id,
-                    Title = subject,
-                    Channel = MessageChannel.Email,
-                    Status = MailStatus.Open,
-                    LastMessageAt = message.Date.UtcDateTime
-                };
-                dbContext.Conversations.Add(conversation);
-                await dbContext.SaveChangesAsync(token);
-
-                var convMsg = new ConversationMessage
-                {
-                    Id = uidStr,
-                    TenantId = inbox.TenantId,
-                    ConversationId = conversation.Id,
-                    FromAddress = message.From.ToString(),
-                    ToAddress = message.To.ToString(),
-                    Subject = subject,
-                    TextBody = message.TextBody ?? string.Empty,
-                    HtmlBody = message.HtmlBody ?? message.TextBody ?? string.Empty,
-                    DateTime = message.Date.UtcDateTime
-                };
-
-                dbContext.ConversationMessages.Add(convMsg);
-                conversation.LastMessageAt = convMsg.DateTime;
-                await dbContext.SaveChangesAsync(token);
-                await rulesProcessor.ProcessConversationAsync(conversation, convMsg);
-
-                lastUid = summary.UniqueId.Id;
-                await _redisDb.StringSetAsync(redisKey, lastUid.ToString());
-                inbox.LastSyncUid = lastUid;
-
-                dbContext.ActivityLogs.Add(new ActivityLog { ConversationId = conversation.Id, UserId = "shared", UserName = inbox.Name, Action = "SharedInboxSynced", Detail = $"公共渠道同步: {subject}" });
-                await dbContext.SaveChangesAsync(token);
-            }
             if (client.IsConnected) await client.DisconnectAsync(true);
         }
         catch (Exception ex) { logger.LogError(ex, "公共渠道 [{Name}] 同步异常", inbox.Name); }
+    }
+
+    private async Task<uint> ProcessImapFolderAsync(
+        IMailFolder? folder,
+        uint lastUid,
+        string redisKey,
+        UserMailConfig? config,
+        SharedInbox? sharedInbox,
+        CargoInboxContext dbContext,
+        RulesEngineProcessor rulesProcessor,
+        string activityDetailPrefix,
+        CancellationToken token)
+    {
+        if (folder == null) return lastUid;
+        await folder.OpenAsync(FolderAccess.ReadOnly, token);
+
+        IList<IMessageSummary> fetched;
+        if (lastUid > 0)
+        {
+            var range = new UniqueIdRange(new UniqueId(lastUid + 1), UniqueId.MaxValue);
+            fetched = await folder.FetchAsync(range, MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope, token);
+        }
+        else
+        {
+            int startIdx = Math.Max(0, folder.Count - 20);
+            fetched = await folder.FetchAsync(startIdx, -1, MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope, token);
+        }
+
+        foreach (var summary in fetched)
+        {
+            if (token.IsCancellationRequested) break;
+
+            var uidStr = summary.UniqueId.ToString();
+            var exists = await dbContext.ConversationMessages
+                .IgnoreQueryFilters()
+                .AnyAsync(m => m.Id == uidStr, token);
+            if (exists) continue;
+
+            var message = await folder.GetMessageAsync(summary.UniqueId, token);
+            var ingested = await IngestEmailMessageAsync(
+                message, uidStr, config, sharedInbox, null, dbContext, rulesProcessor,
+                activityDetailPrefix, token);
+            if (!ingested) continue;
+
+            lastUid = summary.UniqueId.Id;
+            await _redisDb.StringSetAsync(redisKey, lastUid.ToString());
+
+            if (config != null)
+                config.LastSyncUid = lastUid;
+            else if (sharedInbox != null)
+                sharedInbox.LastSyncUid = lastUid;
+
+            await dbContext.SaveChangesAsync(token);
+        }
+
+        return lastUid;
     }
 
     private async Task SyncGmailInboxAsync(
@@ -385,95 +289,14 @@ public class EmailSyncEngineWorker(
                 var rawRfc2822 = await gmailApi.GetMessageRawAsync(session.AccessToken, msgSummary.Id);
                 using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawRfc2822));
                 var message = await MimeMessage.LoadAsync(stream, token);
-                var textContent = message.TextBody ?? string.Empty;
-                var subject = message.Subject ?? "(无主题)";
 
-                // Extract text from HTML when TextBody is empty
-                if (string.IsNullOrWhiteSpace(textContent) && !string.IsNullOrWhiteSpace(message.HtmlBody))
-                {
-                    textContent = GetEmbeddingText(null, message.HtmlBody);
-                }
-
-                foreach (var attachment in message.Attachments)
-                {
-                    if (attachment is MimeKit.MimePart mimePart && mimePart.Content != null)
-                    {
-                        using var memoryStream = new MemoryStream();
-                        await mimePart.Content.DecodeToAsync(memoryStream, token);
-                        memoryStream.Position = 0;
-                        var fileName = mimePart.FileName ?? $"attachment_{Guid.NewGuid():N}";
-                        using var attachmentScope = scopeFactory.CreateScope();
-                        var storageService = attachmentScope.ServiceProvider.GetRequiredService<AttachmentStorageService>();
-                        var mimeType = mimePart.ContentType?.MimeType ?? "application/octet-stream";
-                        await storageService.StoreAsync(memoryStream, fileName, mimeType, msgSummary.Id);
-                    }
-                }
-
-                var subjectPrefix = subject.Length > 15 ? subject[..15] : subject;
-                var conversation = await dbContext.Conversations.IgnoreQueryFilters()
-                    .FirstOrDefaultAsync(c => c.UserId == config.UserId && c.Title != null && c.Title.Contains(subjectPrefix), token);
-
-                if (conversation == null)
-                {
-                    conversation = new Conversation { UserId = config.UserId, TenantId = config.TenantId, Title = subject, Channel = MessageChannel.Email, Status = MailStatus.Open, LastMessageAt = message.Date.UtcDateTime };
-                    dbContext.Conversations.Add(conversation);
-                    await dbContext.SaveChangesAsync(token);
-                }
-
-                var convMsg = new ConversationMessage
-                {
-                    Id = msgSummary.Id, TenantId = config.TenantId, ConversationId = conversation.Id,
-                    FromAddress = message.From.ToString(), ToAddress = message.To.ToString(),
-                    Subject = subject, TextBody = textContent, HtmlBody = message.HtmlBody ?? textContent, DateTime = message.Date.UtcDateTime
-                };
-
-                if (!string.IsNullOrEmpty(convMsg.HtmlBody))
-                    convMsg.HtmlBody = await ReplaceCidImagesAsync(message, convMsg.HtmlBody, msgSummary.Id, token);
-
-                try
-                {
-                    var embedText = GetEmbeddingText(textContent, message.HtmlBody);
-                    if (!string.IsNullOrEmpty(embedText))
-                    {
-                        var apiKey = configuration["AISettings:ApiKey"];
-                        var endpoint = configuration["AISettings:Endpoint"];
-                        var modelId = configuration["AISettings:EmbeddingModelId"];
-                        var requestBody = new { model = modelId, input = new[] { embedText } };
-                        _httpClient.DefaultRequestHeaders.Clear();
-                        _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-                        var response = await _httpClient.PostAsJsonAsync(endpoint + "/embeddings", requestBody, token);
-                        if (response.IsSuccessStatusCode)
-                        {
-                            var jsonResult = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
-                            var embeddingArray = jsonResult.GetProperty("data")[0].GetProperty("embedding").EnumerateArray().Select(x => x.GetSingle()).ToArray();
-                            convMsg.Embedding = new Pgvector.Vector(embeddingArray);
-                        }
-                    }
-                }
-                catch (Exception aiEx) { logger.LogWarning(aiEx, "AI 向量化失败，跳过"); }
-
-                dbContext.ConversationMessages.Add(convMsg);
-                conversation.LastMessageAt = convMsg.DateTime;
-                await dbContext.SaveChangesAsync(token);
-
-                var mail = new Mail
-                {
-                    TenantId = config.TenantId, UserId = config.UserId, MailConfigId = config.Id, ProviderMessageId = msgSummary.Id,
-                    FromAddress = convMsg.FromAddress, ToAddress = convMsg.ToAddress, Subject = convMsg.Subject,
-                    TextBody = convMsg.TextBody, HtmlBody = convMsg.HtmlBody, DateTime = convMsg.DateTime,
-                    IsRead = false, Labels = ["INBOX"], Embedding = convMsg.Embedding, Status = MailStatus.Open
-                };
-                dbContext.Mails.Add(mail);
-                await dbContext.SaveChangesAsync(token);
-
-                await rulesProcessor.ProcessConversationAsync(conversation, convMsg);
+                await IngestEmailMessageAsync(
+                    message, msgSummary.Id, config, null, msgSummary.ThreadId,
+                    dbContext, rulesProcessor, "Gmail API 同步", token);
 
                 var profile = await gmailApi.GetProfileHistoryIdAsync(session.AccessToken);
                 await _redisDb.StringSetAsync(redisKey, profile.ToString());
                 config.LastSyncUid = (uint)(profile & 0xFFFFFFFF);
-
-                dbContext.ActivityLogs.Add(new ActivityLog { ConversationId = conversation.Id, UserId = config.UserId, UserName = config.EmailAddress, Action = "EmailSynced", Detail = $"Gmail API 同步: {subject}" });
-                await dbContext.SaveChangesAsync(token);
             }
 
             config.ConsecutiveFailureCount = 0;
@@ -483,25 +306,179 @@ public class EmailSyncEngineWorker(
         }
         catch (Exception ex)
         {
-            config.ConsecutiveFailureCount++;
-            if (config.ConsecutiveFailureCount >= MaxConsecutiveFailures) { config.IsSuspended = true; config.SuspendedUntil = DateTime.UtcNow.AddMinutes(SuspensionMinutes); }
-            else logger.LogError(ex, "Gmail 邮箱 {Email} 同步失败 ({FailureCount}/{Max})", config.EmailAddress, config.ConsecutiveFailureCount, MaxConsecutiveFailures);
+            await HandleSyncFailureAsync(config, dbContext, ex);
+        }
+    }
+
+    private async Task<bool> IngestEmailMessageAsync(
+        MimeMessage message,
+        string localMessageId,
+        UserMailConfig? config,
+        SharedInbox? sharedInbox,
+        string? gmailThreadId,
+        CargoInboxContext dbContext,
+        RulesEngineProcessor rulesProcessor,
+        string activityDetailPrefix,
+        CancellationToken token)
+    {
+        var tenantId = config?.TenantId ?? sharedInbox!.TenantId;
+        var userId = config?.UserId ?? "shared";
+        var sharedInboxId = sharedInbox?.Id;
+        var internetMessageId = EmailThreadingService.NormalizeMessageId(message.MessageId);
+
+        if (await emailThreading.IsDuplicateInternetMessageAsync(dbContext, tenantId, internetMessageId, token))
+            return false;
+
+        var textContent = message.TextBody ?? string.Empty;
+        var subject = message.Subject ?? "(无主题)";
+
+        if (string.IsNullOrWhiteSpace(textContent) && !string.IsNullOrWhiteSpace(message.HtmlBody))
+            textContent = GetEmbeddingText(null, message.HtmlBody);
+
+        foreach (var attachment in message.Attachments)
+        {
+            if (attachment is MimeKit.MimePart mimePart && mimePart.Content != null)
+            {
+                using var memoryStream = new MemoryStream();
+                await mimePart.Content.DecodeToAsync(memoryStream, token);
+                memoryStream.Position = 0;
+                var fileName = mimePart.FileName ?? $"attachment_{Guid.NewGuid():N}";
+                using var attachmentScope = scopeFactory.CreateScope();
+                var storageService = attachmentScope.ServiceProvider.GetRequiredService<AttachmentStorageService>();
+                var mimeType = mimePart.ContentType?.MimeType ?? "application/octet-stream";
+                await storageService.StoreAsync(memoryStream, fileName, mimeType, localMessageId);
+            }
+        }
+
+        var conversation = await emailThreading.FindThreadAsync(
+            dbContext, message, tenantId, userId, sharedInboxId, gmailThreadId, token);
+
+        if (conversation == null)
+        {
+            conversation = new Conversation
+            {
+                UserId = userId,
+                TenantId = tenantId,
+                SharedInboxId = sharedInboxId,
+                Title = subject,
+                Channel = MessageChannel.Email,
+                Status = MailStatus.Open,
+                LastMessageAt = message.Date.UtcDateTime
+            };
+            if (!string.IsNullOrEmpty(gmailThreadId))
+                EmailThreadingService.EnsureGmailThreadLabel(conversation, gmailThreadId);
+            dbContext.Conversations.Add(conversation);
             await dbContext.SaveChangesAsync(token);
         }
+        else if (!string.IsNullOrEmpty(gmailThreadId))
+        {
+            EmailThreadingService.EnsureGmailThreadLabel(conversation, gmailThreadId);
+        }
+
+        var convMsg = new ConversationMessage
+        {
+            Id = localMessageId,
+            TenantId = tenantId,
+            ConversationId = conversation.Id,
+            FromAddress = message.From.ToString(),
+            ToAddress = message.To.ToString(),
+            Subject = subject,
+            TextBody = textContent,
+            HtmlBody = message.HtmlBody ?? textContent,
+            DateTime = message.Date.UtcDateTime,
+            InternetMessageId = internetMessageId
+        };
+
+        if (!string.IsNullOrEmpty(convMsg.HtmlBody))
+            convMsg.HtmlBody = await ReplaceCidImagesAsync(message, convMsg.HtmlBody, localMessageId, token);
+
+        try
+        {
+            var embedText = GetEmbeddingText(textContent, message.HtmlBody);
+            if (!string.IsNullOrEmpty(embedText))
+            {
+                var apiKey = configuration["AISettings:ApiKey"];
+                var endpoint = configuration["AISettings:Endpoint"];
+                var modelId = configuration["AISettings:EmbeddingModelId"];
+                var requestBody = new { model = modelId, input = new[] { embedText } };
+                _httpClient.DefaultRequestHeaders.Clear();
+                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                var response = await _httpClient.PostAsJsonAsync(endpoint + "/embeddings", requestBody, token);
+                if (response.IsSuccessStatusCode)
+                {
+                    var jsonResult = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
+                    var embeddingArray = jsonResult.GetProperty("data")[0].GetProperty("embedding").EnumerateArray().Select(x => x.GetSingle()).ToArray();
+                    convMsg.Embedding = new Pgvector.Vector(embeddingArray);
+                }
+            }
+        }
+        catch (Exception aiEx) { logger.LogWarning(aiEx, "AI 向量化失败，跳过"); }
+
+        dbContext.ConversationMessages.Add(convMsg);
+        conversation.LastMessageAt = convMsg.DateTime;
+        await dbContext.SaveChangesAsync(token);
+
+        if (config != null && config.ProviderType == MailProviderType.Gmail_OAuth2)
+        {
+            var mail = new Mail
+            {
+                TenantId = config.TenantId,
+                UserId = config.UserId,
+                MailConfigId = config.Id,
+                ProviderMessageId = localMessageId,
+                FromAddress = convMsg.FromAddress,
+                ToAddress = convMsg.ToAddress,
+                Subject = convMsg.Subject,
+                TextBody = convMsg.TextBody,
+                HtmlBody = convMsg.HtmlBody,
+                DateTime = convMsg.DateTime,
+                IsRead = false,
+                Labels = ["INBOX"],
+                Embedding = convMsg.Embedding,
+                Status = MailStatus.Open
+            };
+            dbContext.Mails.Add(mail);
+            await dbContext.SaveChangesAsync(token);
+        }
+
+        await rulesProcessor.ProcessConversationAsync(conversation, convMsg);
+
+        dbContext.ActivityLogs.Add(new ActivityLog
+        {
+            ConversationId = conversation.Id,
+            UserId = userId,
+            UserName = config?.EmailAddress ?? sharedInbox?.Name ?? userId,
+            Action = sharedInbox != null ? "SharedInboxSynced" : "EmailSynced",
+            Detail = $"{activityDetailPrefix}: {subject}"
+        });
+        await dbContext.SaveChangesAsync(token);
+        return true;
+    }
+
+    private async Task HandleSyncFailureAsync(UserMailConfig config, CargoInboxContext dbContext, Exception ex)
+    {
+        config.ConsecutiveFailureCount++;
+        if (config.ConsecutiveFailureCount >= MaxConsecutiveFailures)
+        {
+            config.IsSuspended = true;
+            config.SuspendedUntil = DateTime.UtcNow.AddMinutes(SuspensionMinutes);
+            logger.LogError(ex, "邮箱 {Email} 连续失败 {Count} 次，已熔断至 {Until}", config.EmailAddress, MaxConsecutiveFailures, config.SuspendedUntil);
+        }
+        else
+        {
+            logger.LogError(ex, "邮箱 {Email} 同步失败 ({FailureCount}/{Max})", config.EmailAddress, config.ConsecutiveFailureCount, MaxConsecutiveFailures);
+        }
+        await dbContext.SaveChangesAsync();
     }
 
     private static string GetEmbeddingText(string? textBody, string? htmlBody)
     {
         var text = !string.IsNullOrWhiteSpace(textBody) ? textBody : htmlBody;
         if (string.IsNullOrWhiteSpace(text)) return string.Empty;
-        // Remove style and script blocks
         text = System.Text.RegularExpressions.Regex.Replace(text, @"<style[^>]*>[\s\S]*?</style>", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         text = System.Text.RegularExpressions.Regex.Replace(text, @"<script[^>]*>[\s\S]*?</script>", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-        // Strip HTML tags
         text = System.Text.RegularExpressions.Regex.Replace(text, "<[^>]+>", " ");
-        // Decode HTML entities (&amp; &lt; &#39; etc.)
         text = System.Net.WebUtility.HtmlDecode(text);
-        // Normalize whitespace
         text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
         return text.Length > 1000 ? text[..1000] : text;
     }

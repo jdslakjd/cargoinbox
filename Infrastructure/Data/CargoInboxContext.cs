@@ -30,6 +30,8 @@ public class CargoInboxContext : DbContext
     public DbSet<ConversationMessage> ConversationMessages => Set<ConversationMessage>();
     public DbSet<AutomationRule> AutomationRules => Set<AutomationRule>();
     public DbSet<Contact> Contacts => Set<Contact>();
+    public DbSet<Company> Companies => Set<Company>();
+    public DbSet<CrmActivity> CrmActivities => Set<CrmActivity>();
     public DbSet<MessageTemplate> MessageTemplates => Set<MessageTemplate>();
     public DbSet<Draft> Drafts => Set<Draft>();
     public DbSet<UserSignature> UserSignatures => Set<UserSignature>();
@@ -94,7 +96,37 @@ public class CargoInboxContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.HasIndex(e => e.Email).IsUnique();
+            entity.Property(e => e.Tags).HasColumnType("text[]");
+            entity.HasOne(c => c.LinkedCompany)
+                  .WithMany(co => co.Contacts)
+                  .HasForeignKey(c => c.CompanyId)
+                  .OnDelete(DeleteBehavior.SetNull);
             entity.HasQueryFilter(c => c.TenantId == _tenantProvider.TenantId);
+        });
+
+        modelBuilder.Entity<Company>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => new { e.TenantId, e.Name });
+            entity.Property(e => e.Tags).HasColumnType("text[]");
+            entity.HasQueryFilter(c => c.TenantId == _tenantProvider.TenantId);
+        });
+
+        modelBuilder.Entity<CrmActivity>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.ContactId);
+            entity.HasIndex(e => e.CompanyId);
+            entity.HasIndex(e => e.CreatedAt);
+            entity.HasOne(a => a.Contact)
+                  .WithMany()
+                  .HasForeignKey(a => a.ContactId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(a => a.Company)
+                  .WithMany()
+                  .HasForeignKey(a => a.CompanyId)
+                  .OnDelete(DeleteBehavior.Cascade);
+            entity.HasQueryFilter(a => a.TenantId == _tenantProvider.TenantId);
         });
 
         modelBuilder.Entity<Mail>(entity =>
@@ -156,6 +188,8 @@ public class CargoInboxContext : DbContext
                   .WithMany(c => c.Messages)
                   .HasForeignKey(e => e.ConversationId)
                   .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(e => new { e.TenantId, e.InternetMessageId })
+                  .HasFilter("\"InternetMessageId\" IS NOT NULL");
             // Vector index omitted — pgvector caps at 2000 dims, model uses 2048
             entity.HasQueryFilter(m => m.TenantId == _tenantProvider.TenantId);
         });

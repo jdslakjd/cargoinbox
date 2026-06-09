@@ -32,7 +32,8 @@ public class ContactCaptureService(CargoInboxContext context)
             Email = normalized,
             Name = email.Split('@')[0],
             Company = "独立往来企业",
-            Notes = "Front 收件箱流水线自动捕获创建"
+            Notes = "Front 收件箱流水线自动捕获创建",
+            UpdatedAt = DateTime.UtcNow
         };
 
         context.Contacts.Add(newContact);
